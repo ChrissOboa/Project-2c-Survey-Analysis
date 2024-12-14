@@ -1,0 +1,461 @@
+---
+title: "Analyzing Sociodemographic Inequities in Smartphone Usage and Privacy Behaviors"
+author: "Chriss Jordan Oboa"
+date: "2024-12-02"
+output:
+  pdf_document: default
+  word_document: default
+latex_engine: xelatex
+geometry: margin=1in
+fontsize: 12pt
+---
+
+#Libraries
+
+```{r setup-libraries}
+library(tidyverse)
+library(dplyr)
+library(ggplot2)
+library(broom)
+library(tinytex)
+```
+
+#Step 0: Data Inspection
+```{r setup-dataset}
+# Load the dataset (adjust the path to where your dataset is stored)
+Data_Original <- read.csv("~/Downloads/DataAndSociety_DataAccessGrant_SurveyDataFiles-2/Survey Data Files/Data_Original.csv")
+
+
+#duplicate the data
+Data <- Data_Original
+
+# Inspecting the structure of the dataset
+str(Data)
+
+# Viewing the first few rows
+head(Data)
+
+# Checking for summary statistics and missing values
+summary(Data)
+```
+
+#Step1
+
+##Step 1a: Gender Inequities in Smartphone Usage
+
+###Data Preparation
+```{r }
+# Recode variables
+Data <- Data %>%
+  mutate(
+    sex_clean = ifelse(sex == 1, "Male", "Female"),  # Recode `sex`
+    smartphone_primary = ifelse(SmartPhone == 1, TRUE, FALSE)  # Recode `SmartPhone`
+  )
+
+# Check recoded variables
+table(Data$sex_clean, useNA = "ifany")
+table(Data$smartphone_primary, useNA = "ifany")
+```
+
+###Chi-Square Test for Gender Inequities
+```{r }
+# Filtering for valid responses
+Data_clean <- Data %>%
+  filter(!is.na(sex_clean) & !is.na(smartphone_primary))
+
+# Creating a contingency table
+gender_smartphone_table <- table(Data_clean$sex_clean, Data_clean$smartphone_primary)
+
+# Performing chi-square test
+chi_test_gender <- chisq.test(gender_smartphone_table)
+
+# Display results
+print(gender_smartphone_table)
+print(chi_test_gender)
+```
+
+Males using smartphones primarily
+```{r }
+male_percentage <- gender_smartphone_table["Male", "TRUE"] / sum(gender_smartphone_table["Male", ]) * 100
+print(male_percentage)
+```
+
+Females using smartphones primarily
+```{r }
+female_percentage <- gender_smartphone_table["Female", "TRUE"] / sum(gender_smartphone_table["Female", ]) * 100
+print(female_percentage)
+```
+
+###Interpretation
+The chi-square test for gender indicated a statistically significant association between gender and smartphone usage. Among respondents, it shows that 62.5% of males used smartphones primarily compared to 55.9% of females.
+
+##Step 1b: Income Inequities in Smartphone Usage
+
+###Data Preparation
+```{r }
+# Recoding the income variable
+Data <- Data %>%
+  mutate(
+    income_clean = ifelse(inc %in% c(99, 98, 9), NA, inc),  # Recode non-responses
+    low_income = case_when(
+      income_clean %in% c(1, 2, 3, 4) ~ TRUE,   # Categories 1–4 represent low income
+      income_clean %in% c(5, 6, 7, 8) ~ FALSE, # Categories 5–8 represent higher income
+      TRUE ~ NA                              # Handle missing or non-responses
+    )
+  )
+
+# Check the recoded variable
+table(Data$low_income, useNA = "ifany")
+
+# Verify the recoded `income_clean` variable
+summary(Data$income_clean)
+table(Data$income_clean, useNA = "ifany")
+```
+
+###Chi-Square Test for Income Inequities
+```{r }
+# Filtering valid responses
+Data_clean <- Data %>%
+  filter(!is.na(low_income) & !is.na(smartphone_primary))
+
+# Create a contingency table
+income_smartphone_table <- table(Data_clean$low_income, Data_clean$smartphone_primary)
+
+# Perform chi-square test
+chi_test_income <- chisq.test(income_smartphone_table)
+
+# Displaying results
+print(income_smartphone_table)
+print(chi_test_income)
+```
+
+Low-income respondents using smartphones primarily
+```{r }
+low_income_percentage <- income_smartphone_table["TRUE", "TRUE"] / sum(income_smartphone_table["TRUE", ]) * 100
+print(low_income_percentage)
+```
+
+Higher-income respondents using smartphones primarily
+```{r }
+high_income_percentage <- income_smartphone_table["FALSE", "TRUE"] / sum(income_smartphone_table["FALSE", ]) * 100
+print(high_income_percentage)
+```
+
+###Interpretation
+The chi-square test for income showed a significant association between income and smartphone usage. Among low-income respondents, 45.7% reported using smartphones as their primary internet device, compared to 75.2% of higher-income respondents.
+
+
+#Step 2: Sociodemographic Inequities in Privacy/Security Behaviors
+
+##Logistic Regression Model
+
+###Data Preparation
+```{r }
+# Recode sociodemographic variables
+Data <- Data %>%
+  mutate(
+    raceethn_clean = case_when(
+      racethn == 1 ~ "White",
+      racethn == 2 ~ "Black",
+      racethn == 3 ~ "Hispanic",
+      racethn == 4 ~ "Other",
+      racethn %in% c(9, 99) ~ NA_character_
+    ),
+    education_clean = case_when(
+      educ2 %in% c(1, 2) ~ "No College",
+      educ2 %in% c(3, 4, 5) ~ "Some College",
+      educ2 %in% c(6, 7) ~ "College Graduate",
+      TRUE ~ NA_character_
+    ),
+    sex_clean = ifelse(sex == 1, "Male", "Female"),
+    low_income = ifelse(income_clean < 40000, TRUE, FALSE)  # Already recoded
+  )
+
+# Creating a binary variable for SM1 behaviors
+Data <- Data %>%
+  mutate(
+    privacy_behavior = ifelse(rowSums(select(., starts_with("sm1")), na.rm = TRUE) > 0, TRUE, FALSE)
+  )
+
+# Filter complete cases
+Data_clean <- Data %>%
+  filter(
+    !is.na(raceethn_clean),
+    !is.na(low_income),
+    !is.na(education_clean),
+    !is.na(sex_clean),
+    !is.na(privacy_behavior)
+  )
+```
+
+###Logistic Regression Model
+```{r }
+# Fitting logistic regression model
+privacy_model <- glm(
+  privacy_behavior ~ low_income + sex_clean + raceethn_clean + education_clean + age,
+  data = Data_clean,
+  family = binomial
+)
+
+# View regression summary
+summary(privacy_model)
+```
+
+###Odds Ratios and Visualization
+```{r }
+# Excluding the NA coefficients 
+odds_ratios <- exp(coef(privacy_model)[!is.na(coef(privacy_model))])
+conf_intervals <- exp(confint(privacy_model)[!is.na(coef(privacy_model)), ])
+
+# Combining results into a table
+results <- data.frame(
+  Variable = names(odds_ratios),
+  Odds_Ratio = odds_ratios,
+  Lower_CI = conf_intervals[, 1],
+  Upper_CI = conf_intervals[, 2],
+  p_value = coef(summary(privacy_model))[, 4][!is.na(coef(privacy_model))]
+)
+
+# Display the results
+print(results)
+```
+
+
+### Bar Plot for Odds Ratios
+```{r }
+#Bar Plot for Odds Ratios
+categorical_effects <- results %>%
+  filter(!Variable %in% c("(Intercept)", "age"))  # Exclude intercept and age for the bar plot
+
+ggplot(categorical_effects, aes(x = reorder(Variable, Odds_Ratio), y = Odds_Ratio)) +
+  geom_bar(stat = "identity", fill = "skyblue", color = "black") +
+  geom_errorbar(aes(ymin = Lower_CI, ymax = Upper_CI), width = 0.3, color = "red") +
+  scale_y_log10() +  # Log scale for odds ratios
+  labs(
+    title = "Odds Ratios for Sociodemographic Variables",
+    subtitle = "Log scale used to highlight differences in effect size",
+    x = "Sociodemographic Variables",
+    y = "Odds Ratio (Log Scale)"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, color = "darkblue", size = 12),
+    axis.title = element_text(size = 14),
+    plot.title = element_text(size = 16, face = "bold"),
+    plot.subtitle = element_text(size = 14, face = "italic")
+  )
+  
+```
+
+
+### Line Plot for Age Effect
+```{r }
+#Line Plot for Age Effect
+age_range <- seq(18, 80, 1)
+predicted_odds <- exp(log(odds_ratios["age"]) * age_range)  # Simulate odds based on age
+
+# Data frame for plotting
+age_effect <- data.frame(Age = age_range, Odds = predicted_odds)
+
+ggplot(age_effect, aes(x = Age, y = Odds)) +
+  geom_line(color = "darkred", size = 1.2) +
+  geom_point(data = age_effect[seq(1, nrow(age_effect), by = 5), ], aes(x = Age, y = Odds), size = 2, color = "red") +
+  labs(
+    title = "Effect of Age on Privacy Behaviors",
+    subtitle = "Odds of engaging in privacy behaviors decrease with age",
+    x = "Age (Years)",
+    y = "Odds of Privacy Behaviors"
+  ) +
+  annotate("text", x = 60, y = max(age_effect$Odds), label = "Decreasing trend", color = "darkred", hjust = 1.2) +
+  theme_minimal() +
+  theme(
+    axis.title = element_text(size = 14),
+    axis.text = element_text(size = 12),
+    plot.title = element_text(size = 16, face = "bold"),
+    plot.subtitle = element_text(size = 14, face = "italic")
+  )
+```
+
+###Key Findings:
+
+Race/Ethnicity: White respondents were significantly more likely to engage in privacy/security behaviors compared to Black and Hispanic respondents.
+
+Education: Respondents with no college education were significantly less likely to engage in privacy/security behaviors.
+
+Age: Older individuals showed a slight reduction in privacy behavior engagement with increasing age.
+
+#Step 3: Justify Your Analysis Choices
+##In 250 words or less, explain the reasoning behind your approach for each RQ.
+
+RQ1a: Gender Inequities in Smartphone Usage
+We used a chi-square test to explore the relationship between gender and smartphone usage because both variables are categorical. The variable sex was recoded into sex_clean with values "Male" and "Female." Similarly, the SmartPhone variable was recoded into smartphone_primary as a binary indicator of whether respondents primarily used their smartphones for internet access. Non-responses were excluded to ensure valid comparisons. The chi-square test was chosen to test independence between gender and smartphone usage.
+
+RQ1b: Income Inequities in Smartphone Usage
+The income variable was transformed into low_income, a binary indicator for respondents earning below $40,000 annually, to focus on disparities between low and higher-income groups. Non-responses were excluded. A chi-square test was again used to examine the association between income status and smartphone usage.
+
+RQ2: Sociodemographic Inequities in Privacy/Security Behaviors
+Logistic regression was employed to investigate sociodemographic predictors of privacy/security behaviors (privacy_behavior). Predictors included income, gender, race/ethnicity, education, and age. Categorical variables (race, education) were collapsed into fewer levels to ensure sufficient sample sizes for comparisons. Non-responses were also excluded. Logistic regression was selected because it accommodates a binary dependent variable (privacy behavior: yes/no).
+
+
+###Effect of Education and Age
+```{r }
+# Filtering results for categorical variables
+categorical_effects <- results %>%
+  filter(!Variable %in% c("(Intercept)", "age"))  # Exclude intercept and age for the bar plot
+```
+
+```{r }
+ggplot(categorical_effects, aes(x = Variable, y = Odds_Ratio)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  geom_errorbar(aes(ymin = Lower_CI, ymax = Upper_CI), width = 0.2) +
+  scale_y_log10() +  # Log scale for odds ratios
+  theme_minimal() +
+  labs(
+    title = "Odds Ratios for Sociodemographic Factors Affecting Privacy Behaviors",
+    subtitle = "Visualizing the impact of education, race, and gender",
+    x = "Sociodemographic Variables",
+    y = "Odds Ratio (Log Scale)"
+  ) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+###Effect of Age
+```{r }
+# Generating data for predicted age effect
+age_range <- seq(18, 80, 1)  # Age range for prediction
+predicted_odds <- exp(log(odds_ratios["age"]) * age_range)  # Simulate odds based on age
+
+# Create a data frame for plotting
+age_effect <- data.frame(Age = age_range, Odds = predicted_odds)
+```
+
+```{r }
+# Create a data frame for plotting
+age_effect <- data.frame(Age = age_range, Odds = predicted_odds)
+
+# Plotting the effect of age
+ggplot(age_effect, aes(x = Age, y = Odds)) +
+  geom_line(color = "darkred", linewidth = 1) +  # Use linewidth instead of size
+  theme_minimal() +
+  labs(
+    title = "Effect of Age on Privacy Behaviors",
+    subtitle = "Simulated odds for increasing age",
+    x = "Age (Years)",
+    y = "Odds of Engaging in Privacy Behaviors"
+  ) +
+  annotate("text", x = 60, y = max(age_effect$Odds), label = "Decreasing trend", color = "darkred", hjust = 1)
+```
+
+#Step 4: Reporting Your Results (400 Words or Less)
+
+##RQ1a: Gender Inequities in Smartphone Usage
+To investigate gender differences in smartphone usage, we conducted a chi-square test using recoded gender (sex_clean) and smartphone usage (smartphone_primary) variables. Results showed a statistically significant association between gender and smartphone usage (x² = 13.1, p < 0.001). About 62.5% of males used smartphones primarily for internet access, compared to 55.9% of females. This disparity highlights that males are more reliant on smartphones for internet access than females.
+
+##RQ1b: Income Inequities in Smartphone Usage
+Income's impact on smartphone usage was analyzed using the binary variable low_income (< $40,000). The chi-square test revealed a strong association. While 45.7% of low-income respondents relied on smartphones primarily for internet access, this figure was significantly higher for higher-income respondents (75.2%). These results emphasize income as a critical factor in smartphone dependency.
+
+##RQ2: Sociodemographic Inequities in Privacy/Security Behaviors
+We used logistic regression to explore predictors of privacy/security behaviors (privacy_behavior). 
+
+Key findings included:
+
+Race/Ethnicity: White respondents were significantly more likely to engage in privacy/security behaviors than Black or Hispanic respondents (OR = 1.40, p = 0.027).
+
+Education: Education was a strong predictor. Respondents without college education were 86% less likely to engage in privacy/security behaviors (OR = 0.14, p < 0.001). Those with some college education were also less likely (OR = 0.40, p < 0.001).
+
+Age: Older individuals showed a slight decline in engagement, with a 6% reduction in odds per additional year (OR = 0.94, p < 0.001).
+
+Gender and Income: Neither was significant after controlling for other factors.
+
+These findings underscore the influence of race, education, and age on privacy behavior, while gender and income exhibited no independent effects.
+
+#Extra Credit: Regional Differences in Privacy/Security Behaviors
+We examined regional differences in privacy/security behaviors using logistic regression with region_clean as the predictor.
+
+##Logistic Regression by Region
+# Recode region variable
+```{r }
+# Recode region variable
+Data <- Data %>%
+  mutate(region_clean = case_when(
+    scregion == 1 ~ "Northeast",
+    scregion == 2 ~ "Midwest",
+    scregion == 3 ~ "South",
+    scregion == 4 ~ "West",
+    TRUE ~ NA_character_
+  ))
+
+# Convert region_clean to a factor and set "Northeast" as the reference level
+Data <- Data %>%
+  mutate(region_clean = factor(region_clean, levels = c("Northeast", "Midwest", "South", "West")))
+
+# Filter complete cases for logistic regression
+Data_clean <- Data %>%
+  filter(
+    !is.na(raceethn_clean),
+    !is.na(low_income),
+    !is.na(education_clean),
+    !is.na(sex_clean),
+    !is.na(privacy_behavior),
+    !is.na(region_clean)  # Ensure no missing values for region_clean
+  )
+
+# Fit logistic regression model with "Northeast" as the reference level
+region_model <- glm(privacy_behavior ~ region_clean, data = Data_clean, family = binomial)
+
+# View regression summary
+summary(region_model)
+
+```
+```{r }
+# Set "Northeast" as the reference level
+Data_clean$region_clean <- relevel(Data_clean$region_clean, ref = "Northeast")
+
+
+```
+##Visualizing Regional Effects
+```{r }
+# Extract odds ratios and confidence intervals
+odds_ratios_region <- exp(coef(region_model))
+conf_intervals_region <- exp(confint(region_model))
+
+# Create a data frame for visualization
+region_results <- data.frame(
+  Region = names(odds_ratios_region),
+  Odds_Ratio = odds_ratios_region,
+  Lower_CI = conf_intervals_region[, 1],
+  Upper_CI = conf_intervals_region[, 2]
+)
+
+# Exclude intercept from the results
+region_results <- region_results[-1, ]  # Remove "(Intercept)"
+
+# Add Northeast as the reference point (Odds Ratio = 1)
+region_results <- region_results %>%
+  add_row(
+    Region = "Northeast",
+    Odds_Ratio = 1,
+    Lower_CI = 1,
+    Upper_CI = 1
+  ) %>%
+  arrange(factor(Region, levels = c("Northeast", "Midwest", "South", "West")))
+
+# Plot the regional odds ratios
+ggplot(region_results, aes(x = Region, y = Odds_Ratio)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  geom_errorbar(aes(ymin = Lower_CI, ymax = Upper_CI), width = 0.2) +
+  scale_y_log10() +  # Log scale for odds ratios
+  labs(
+    title = "Regional Effects on Privacy Behaviors",
+    subtitle = "Odds ratios compared to the reference region (Northeast)",
+    x = "Region",
+    y = "Odds Ratio (Log Scale)"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    plot.title = element_text(size = 16, face = "bold"),
+    plot.subtitle = element_text(size = 12, face = "italic")
+  )
+```
+
